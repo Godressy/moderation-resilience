@@ -1,0 +1,18 @@
+# runtime artifacts — never commit these
+*-audit.jsonl
+*-state.json
+*-attention.json
+*.lock
+*.bak-scrub-*
+*.tmp-*
+*-probe-log.jsonl
+
+# editor / os
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# node (kept dependency-free on purpose; ignore anything accidental)
+node_modules/
+npm-debug.log*

@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"<ABS_PATH>/hooks/content-firewall.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"<ABS_PATH>/hooks/refusal-recovery.mjs\"",
+            "name": "refusal-recovery",
+            "asyncRewake": true,
+            "rewakeMessage": "[refusal-recovery]",
+            "rewakeSummary": "gateway refusal auto-recovery",
+            "timeout": 180
+          }
+        ]
+      }
+    ]
+  }
+}

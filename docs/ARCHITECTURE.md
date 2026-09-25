@@ -18,7 +18,7 @@ Qoder 钩子的通用契约：stdin 收事件 JSON、stdout 回控制 JSON、退
 
 | 组件 | 事件 | 输入 | 输出 | 特殊字段 |
 |---|---|---|---|---|
-| content-firewall | `PostToolUse` | `tool_name/tool_response/model` | `hookSpecificOutput.updatedToolOutput` 替换工具结果 | `model` 用于模型门 |
+| content-firewall | `PostToolUse` | `tool_name/tool_response/model` | `hookSpecificOutput.updatedToolOutput` 替换工具结果 | `model` 用于模型门（**未列入官方字段清单，靠实测确认**；缺失时写 `no_model_skip` 审计，见 [KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md) 能力边界 5） |
 | refusal-recovery | `StopFailure` | `error/error_details/transcript_path/model/session_id` | **exit 2 + stderr**（异步唤醒） | `asyncRewake:true` |
 
 关键平台事实（详见 [ASYNCREWAKE.md](ASYNCREWAKE.md)）：

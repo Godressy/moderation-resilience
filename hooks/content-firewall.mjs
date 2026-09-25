@@ -13,6 +13,11 @@
 //     the residual tier then re-masks any still-exempt unit that holds real trigger words
 //   * model gate: masking applies ONLY to the configured model family (default: /mimo/i);
 //     every other model receives byte-identical output
+//   * scan scope: hit counting runs over the FULL text (measured ~5 ms/MB) — the old 512 KiB
+//     counting window silently skipped hits late in large tool results and is gone
+//   * the model gate reads a field the published PostToolUse schema does not list (see
+//     KNOWN-LIMITATIONS.md). When the field is ABSENT the hook stays passive but records
+//     rule=no_model_skip, so the failure mode is observable instead of silent
 //   * fail-open: any exception -> exit 0 with no output (a broken filter must never break the
 //     agent); the audit jsonl records sizes/rules/counters only, never raw content
 //
@@ -32,7 +37,6 @@ import path from "node:path";
 const BASE = process.env.QODER_CONFIG_DIR || path.join(os.homedir(), ".qoder");
 const MODEL_MATCH = new RegExp(process.env.CONTENT_FIREWALL_MODEL_MATCH || "mimo", "i");
 const MIN_CHARS = 400;
-const MAX_SCAN = 512 * 1024;
 const UNIT_WINDOW = 160; // chars each side of a hit when expanding the masked unit
 const WHOLE_SEG_HITS = 4; // >=4 hits in a hint-free segment -> mask the whole segment
 const MASK = "[explicit descriptive content removed]";
@@ -134,8 +138,7 @@ function maskText(text, usePreserve = true) {
 function sanitizeText(text) {
   const meta = { rule: null, rawLen: text.length, maskedUnits: 0, residualUnits: 0 };
   if (text.length < MIN_CHARS) return { text: null, meta };
-  const scan = text.length <= MAX_SCAN ? text : text.slice(0, MAX_SCAN);
-  const { count, samples } = density(scan);
+  const { count, samples } = density(text);
   if (count === 0) return { text: null, meta };
 
   const pass1 = maskText(text, true);
@@ -147,7 +150,7 @@ function sanitizeText(text) {
   const residualOff = ["0", "false", "no", "off"].includes(String(process.env.CONTENT_FIREWALL_RESIDUAL || "").trim().toLowerCase());
   let residualUnits = 0;
   if (!residualOff) {
-    const left1 = density(newText.length <= MAX_SCAN ? newText : newText.slice(0, MAX_SCAN));
+    const left1 = density(newText);
     if (left1.count > 0) {
       const pass2 = maskText(newText, false);
       if (pass2.maskedUnits > 0) {
@@ -158,7 +161,7 @@ function sanitizeText(text) {
     }
   }
   if (maskedUnits === 0) return { text: null, meta };
-  const left = density(newText.length <= MAX_SCAN ? newText : newText.slice(0, MAX_SCAN));
+  const left = density(newText);
   meta.rule = residualUnits > 0 ? "mask_spans+residual" : "mask_spans";
   meta.maskedUnits = maskedUnits;
   meta.residualUnits = residualUnits;
@@ -195,7 +198,13 @@ process.stdin.on("end", () => {
     const input = JSON.parse(raw);
     if (input.hook_event_name !== "PostToolUse") return quit(null);
     // model gate: only the configured model family needs masking (gateway review).
-    if (!MODEL_MATCH.test(String(input.model || ""))) return quit(null);
+    const servedModel = String(input.model || "");
+    if (!MODEL_MATCH.test(servedModel)) {
+      // `model` is not in the published PostToolUse field list — if it ever disappears the
+      // protection would silently no-op, so leave a trace instead of vanishing.
+      if (!servedModel) audit({ session: input.session_id, tool: input.tool_name, rule: "no_model_skip", blocked: false, sensitive: false });
+      return quit(null);
+    }
     const toolName = String(input.tool_name || "");
     let result = input.tool_response;
     if (result == null) return quit(null);

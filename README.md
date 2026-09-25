@@ -1,8 +1,9 @@
 # moderation-resilience
 
 > Keep agent CLI sessions alive when an over-triggering gateway content review kills turns.
-> Reference implementation for **Qoder hooks** + the Xiaomi MiMo gateway, battle-tested in daily
-> use. Zero dependencies, plain Node ESM.
+> Reference implementation for **Qoder hooks** + the Xiaomi MiMo gateway. Developed and used
+> daily by the author; first published 2026-09, **not yet independently validated**.
+> Zero dependencies, plain Node ESM.
 
 [English](#english) · 中文说明见下
 
@@ -71,7 +72,7 @@
 }
 ```
 
-3. 跑测试确认环境正常（三套共 42 条断言，全部在临时沙盒里跑，不碰真实数据）：
+3. 跑测试确认环境正常（三套共 45 条断言，全部在临时沙盒里跑，不碰真实数据）：
 
 ```bash
 node tests/content-firewall.test.mjs
@@ -121,7 +122,8 @@ still-dead re-check → escalating instructions → hard retry cap), and a CLI *
 tool (backup + atomic + verified masking of the stored transcript so a reloaded session comes
 back clean; proved via a fork experiment — see docs).
 
-Battle-tested with Qoder hooks + the Xiaomi MiMo gateway in daily use. Node ≥ 20, zero deps.
+Built for Qoder hooks + the Xiaomi MiMo gateway, and used daily by the author since 2026-09.
+Published as-is: no third-party validation yet. Node ≥ 20, zero deps.
 Disclaimers: use only on your own accounts/content, comply with provider terms and local law,
 no unlawful use. MIT.
 

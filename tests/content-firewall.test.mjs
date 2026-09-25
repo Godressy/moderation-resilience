@@ -20,10 +20,10 @@ const pad = (core) => {
   return s;
 };
 
-const run = (text, model = "mimo-v2.6-flash", envOver = {}) => spawnSync(process.execPath, [HOOK], {
+const run = (text, model = "mimo-v2.6-flash", envOver = {}, timeoutMs = 20000) => spawnSync(process.execPath, [HOOK], {
   input: JSON.stringify({ hook_event_name: "PostToolUse", session_id: "TEST", model,
     tool_name: "Read", tool_input: {}, tool_response: text }),
-  encoding: "utf8", timeout: 20000,
+  encoding: "utf8", timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, // large results echo back ~1:1
   env: { ...process.env, QODER_CONFIG_DIR: SANDBOX, ...envOver },
 });
 const parseOut = (r) => {
@@ -112,6 +112,36 @@ const t11 = ["版本说明 version 2.1 中性与流程无关", pad("下载说明
 r = run(t11); o = parseOut(r);
 check("T11 hint line without hits untouched", o.changed && o.text.includes("version 2.1 中性与流程无关") && o.text.includes("结束行 version 仍应原样保留"),
   `firstLineKept=${o.text.includes("version 2.1")}`);
+
+// T12: >512 KiB result whose ONLY hit sits past the old 512 KiB counting window -> must mask
+// (regression for the removed cap: the tail hit used to be invisible and the text passed raw).
+const filler = "中性填充段落，用于把文本堆到 512 KiB 以上，不含任何触发词。 "; // ~50 chars
+const big = filler.repeat(Math.ceil((600 * 1024) / filler.length)) + "尾部出现露骨描述文本。";
+const n12 = auditCount();
+r = run(big); o = parseOut(r); a = lastAudit();
+check("T12 >512 KiB tail hit masked (cap removed)", o.changed && o.text.includes(MASK) && !o.text.includes("露骨") && a && a.rule === "mask_spans" && a.remaining_hits === 0,
+  `inLen=${big.length} masked_units=${a && a.masked_units} remaining=${a && a.remaining_hits} auditDelta=${auditCount() - n12}`);
+
+// T13: 8 MB all-clean result -> passthrough, no audit line, and full-text scanning stays linear
+const huge = filler.repeat(Math.ceil((8 * 1024 * 1024) / filler.length));
+const n13 = auditCount();
+const t13 = Date.now();
+r = run(huge, "mimo-v2.6-flash", {}, 60000);
+const ms13 = Date.now() - t13;
+check("T13 8 MB clean passthrough, linear cost", !(r.stdout || "").trim() && auditCount() === n13 && ms13 < 3000,
+  `len=${huge.length} elapsed=${ms13}ms auditDelta=${auditCount() - n13}`);
+
+// T14: payload without the (undocumented) model field -> passive, but leaves rule=no_model_skip
+const n14 = auditCount();
+const r14 = spawnSync(process.execPath, [HOOK], {
+  input: JSON.stringify({ hook_event_name: "PostToolUse", session_id: "TEST",
+    tool_name: "Read", tool_input: {}, tool_response: pad("这里讨论了 explicit 标注的定义与流程。") }),
+  encoding: "utf8", timeout: 20000, maxBuffer: 64 * 1024 * 1024,
+  env: { ...process.env, QODER_CONFIG_DIR: SANDBOX },
+});
+a = lastAudit();
+check("T14 missing model -> passive + no_model_skip audit", !(r14.stdout || "").trim() && a && a.rule === "no_model_skip" && auditCount() === n14 + 1,
+  `rule=${a && a.rule} auditDelta=${auditCount() - n14}`);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 console.log(`sandbox: ${SANDBOX}`);

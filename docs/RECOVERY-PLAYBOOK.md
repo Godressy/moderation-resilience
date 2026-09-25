@@ -13,6 +13,27 @@
 大多数拒答止步于 ②。走到 ④ 的条件是：**同一会话连续被拒超过窗口上限**（默认 30 分钟内 3 次），
 且熔断标记已生成。
 
+## ③ 通知：你怎么知道发生过拒答
+
+三条通路，任选其一或全开：
+
+- **熔断标记**：`refusal-recovery` 超限后写 `refusal-recovery-attention.json`；`prompt-gate`
+  在你该会话的下一条消息上呈报一次，然后清掉该条（不 nag）。
+- **本地巡检**：`refusal-watchdog` 扫 transcript 的拒答指纹 + 恢复审计，把结论写进
+  `refusal-watchdog-pending.json` 收件箱；同样是 `prompt-gate` 呈报一次后删除。它**不发任何
+  模型请求**，所以可以用来"没事就看看"，不会为检查本身付上下文与额度。
+- **手工查看**：
+
+```bash
+# 立刻扫一遍，打印 JSON 摘要（不改任何东西：零请求、零写入、零删除）
+node hooks/refusal-watchdog.mjs --json
+# 换客户端/换目录时先这样验证它真能扫到东西（见 docs/KNOWN-LIMITATIONS.md 未验证项 4）
+node hooks/refusal-watchdog.mjs --json --root "/path/to/that/client/sessions"
+```
+
+注意：巡检的计数只统计"上次扫描之后的新条目"，所以**修好一处旧问题后摘要会归零**——这正常，
+不代表历史事件不存在。
+
 ## ④ 深恢复操作手册
 
 原理：会话的 fork/resume 会**从磁盘 transcript 重建历史**（下方有实证）。因此把磁盘上的敏感

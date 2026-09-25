@@ -25,6 +25,17 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"<ABS_PATH>/hooks/prompt-gate.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

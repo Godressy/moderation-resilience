@@ -20,6 +20,8 @@ Qoder 钩子的通用契约：stdin 收事件 JSON、stdout 回控制 JSON、退
 |---|---|---|---|---|
 | content-firewall | `PostToolUse` | `tool_name/tool_response/model` | `hookSpecificOutput.updatedToolOutput` 替换工具结果 | `model` 用于模型门（**未列入官方字段清单，靠实测确认**；缺失时写 `no_model_skip` 审计，见 [KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md) 能力边界 5） |
 | refusal-recovery | `StopFailure` | `error/error_details/transcript_path/model/session_id` | **exit 2 + stderr**（异步唤醒） | `asyncRewake:true` |
+| refusal-watchdog | 无（手动或被拉起） | 本地 transcript 目录 + `refusal-recovery-audit.jsonl` | `refusal-watchdog-pending.json`（收件箱） | **零模型请求、零写入 transcript、零删除** |
+| prompt-gate | `UserPromptSubmit` | `prompt/session_id` | `systemMessage`（仅计数，不回显） | exit 2 可升级为真拦截；节流拉起巡检 |
 
 关键平台事实（详见 [ASYNCREWAKE.md](ASYNCREWAKE.md)）：
 
@@ -30,7 +32,7 @@ Qoder 钩子的通用契约：stdin 收事件 JSON、stdout 回控制 JSON、退
 
 ## 设计原则
 
-1. **fail-open**：三个脚本的任何异常都是 exit 0 / 无输出。过滤器坏掉的默认形态是"不干预"，
+1. **fail-open**：五个脚本的任何异常都是 exit 0 / 无输出。过滤器坏掉的默认形态是"不干预"，
    而不是"断链"。
 2. **零原文审计**：所有 `*-audit.jsonl` 只记时间戳、长度、规则名、计数与样本词干，
    永不记录被处理文本本身。
@@ -42,16 +44,24 @@ Qoder 钩子的通用契约：stdin 收事件 JSON、stdout 回控制 JSON、退
    任何情况下都不会变成死循环（对照：无熔断的盲重试会把会话永远卡在拒答上）。
 6. **人工优先的破坏性操作**：清洗 transcript 默认 dry-run、必须 `--apply`、强制备份、
    写后校验、活跃保护——它是操作者工具，不是钩子。
+7. **观测必须零成本**：巡检不做成"定时自动化任务"。那版实现每 10 分钟起一个 agent 回合，
+   后果是（a）同一个会话被越堆越长、（b）每次运行都真发一次模型请求、烧账号日额度——
+   它自己就是这样被额度错误打死的。现方案是纯本地文件扫描（零请求、零写入、零删除），
+   由 `prompt-gate` 节流拉起，只把结论投进收件箱。
 
 ## 状态与文件
 
 ```
 <config>/hooks/
   content-firewall-audit.jsonl       # 遮罩审计
+  prompt-gate-audit.jsonl            # 输入门审计（prompt_density: warn/block）
   refusal-recovery-audit.jsonl       # 恢复动作审计（rewake/giveup/skip_*）
   refusal-recovery-state.json        # 每会话 attempts[] + lastWakeTs（原子写）
-  refusal-recovery-attention.json    # 熔断标记，供你自己的 UX 钩子呈现并自清
+  refusal-recovery-attention.json    # 熔断标记，由 prompt-gate 呈报一次并自清
   refusal-recovery.lock              # 跨进程互斥（120s 陈旧回收）
+  refusal-watchdog-state.json        # 巡检游标 lastScanTs + notified[]（去重）
+  refusal-watchdog-pending.json      # 巡检收件箱，prompt-gate 读后即删
+  refusal-watchdog-spawn.json        # 拉起步进器（节流用）
 ```
 
 `refusal-recovery` 的审计 `action` 词表：
@@ -66,9 +76,16 @@ Qoder 钩子的通用契约：stdin 收事件 JSON、stdout 回控制 JSON、退
 2. 网关拒答 → StopFailure 事件
    ├─ refusal-recovery：退避 → 复核仍死 → exit 2 → 注入唤醒 → 新回合   （恢复，≤N 次）
    └─ 超限 → attention 标记（永不唤醒）                              （熔断）
-3. 熔断后：由你的 UX 钩子/巡检把标记递给用户
+3. 观测：prompt-gate 节流拉起 refusal-watchdog → 本地扫指纹/审计 → 收件箱
+   → 用户下次发消息时 prompt-gate 呈报一次（零模型请求）              （观测）
 4. 内容锁死 → history-scrub dry-run → --apply → 重开/分支会话        （兜底）
 ```
+
+巡检的分类逻辑（写死在 `refusal-watchdog.mjs`，改前先读）：指纹**只**用严格串
+`"model":"<synthetic>"`——额度/鉴权失败会落到同一个指纹上，所以命中后必须按文案再分类：
+匹配 `contains sensitive content|considered high risk|…` 记 `refusal`（进收件箱），
+匹配 `daily usage limit|billing daily count|…` 记 `quota`（**不进**——它在会话里本来就有一条
+可见的助手消息，重复告警是噪音），其余记 `other`。计数只统计"上次扫描之后"的新条目。
 
 ## 与其他方案的关系
 
